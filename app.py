@@ -98,10 +98,23 @@ def show_market_data(ticker):
                 xaxis=dict(showgrid=False, showticklabels=False),
                 yaxis=dict(showgrid=False, showticklabels=False)
             )
-            st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
-            
-    except:
-        st.warning("Data currently unavailable.")
+            st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
+        except:
+            st.write("Chart unavailable")
+
+# --- SIDEBAR: SETTINGS ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.write("Sentinel AI v2.0")
+    # You can add Model selection here later
+
+# --- MAIN LAYOUT ---
+st.title("🛡️ Sentinel Terminal")
+
+# Top Bar: Stock Selector
+col1, col2 = st.columns([3, 1])
+with col1:
+    selected_ticker = st.text_input("Active Ticker", value="NVDA", label_visibility="collapsed")
 
 # --- AGENT: TAVILY RESEARCHER ---
 def perform_live_research(ticker):
@@ -222,7 +235,9 @@ if prompt := st.chat_input("Ask Sentinel..."):
         stream = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system",
+                 "content": f"You are a helpful financial analyst AI. Answer the user's question clearly and naturally using the provided news context. If the context doesn't have the answer, say so politely. Do not act like a command-line terminal. Context: {context_text}"
+                },
                 {"role": "user", "content": prompt}
             ],
             stream=True
