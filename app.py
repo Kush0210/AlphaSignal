@@ -7,39 +7,33 @@ from datetime import datetime, timedelta
 from supabase import create_client, Client
 from groq import Groq
 from sentence_transformers import SentenceTransformer
-from duckduckgo_search import DDGS
+from tavily import TavilyClient
 
-# --- PAGE CONFIGURATION (Browser Tab) ---
+# --- CONFIGURATION ---
 st.set_page_config(
-    page_title="Sentinel Terminal",
+    page_title="Sentinel Pro",
     page_icon="🛡️",
-    layout="wide", # Uses full screen width
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- CSS HACKS FOR "CLEAN" LOOK ---
+# --- CSS STYLING ---
 st.markdown("""
 <style>
-    /* Hide Streamlit Header & Footer */
     header {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* Custom Card Style for News */
-    .news-card {
+    .stMetric {
+        background-color: #0E1117;
         padding: 15px;
         border-radius: 10px;
-        background-color: #1E1E1E;
-        margin-bottom: 10px;
-        border-left: 5px solid #00D4FF;
+        border: 1px solid #262730;
     }
-    .news-title {
-        color: #FFFFFF;
-        font-weight: bold;
-        font-size: 16px;
-    }
-    .news-meta {
-        color: #AAAAAA;
-        font-size: 12px;
+    .source-card {
+        padding: 10px;
+        margin-bottom: 8px;
+        background-color: #262730;
+        border-radius: 5px;
+        border-left: 4px solid #00C0F2;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -48,196 +42,196 @@ st.markdown("""
 try:
     supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
-    st.error("❌ Secrets missing! Please update Streamlit Secrets.")
+    tavily = TavilyClient(api_key=st.secrets["TAVILY_API_KEY"])
+except Exception as e:
+    st.error(f"❌ Connection Error: {e}. Check your Streamlit Secrets.")
     st.stop()
 
+# --- LOAD NEW AI MODEL (BGE-Small) ---
 @st.cache_resource
 def load_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    # BGE-Small is SOTA for this size. 384 dimensions.
+    return SentenceTransformer('BAAI/bge-small-en-v1.5')
 
 model = load_model()
 
-# --- NEW FEATURE: LIVE MARKET DATA FRAGMENT ---
-# @st.fragment allows this specific function to auto-refresh every 10s
-# WITHOUT reloading the whole chat or clearing the screen.
-@st.fragment(run_every=30) 
+# --- FRAGMENT: LIVE MARKET DATA (Auto-Refreshes) ---
+@st.fragment(run_every=30)
 def show_market_data(ticker):
-    if not ticker:
-        return
-
-    cols = st.columns([1, 3])
+    if not ticker: return
     
-    with cols[0]:
-        # Fetch Live Data
+    # Fetch Data
+    try:
         stock = yf.Ticker(ticker)
-        # Fast info usually has 'last_price'
-        try:
-            info = stock.fast_info
-            price = info.last_price
-            prev_close = info.previous_close
-            change = price - prev_close
-            pct_change = (change / prev_close) * 100
-            
-            # 1. The Big Green/Red Number
+        # Fast Info is faster than history
+        info = stock.fast_info 
+        current = info.last_price
+        prev = info.previous_close
+        change = current - prev
+        pct = (change / prev) * 100
+        
+        col1, col2 = st.columns([1, 3])
+        with col1:
             st.metric(
-                label=f"{ticker.upper()} Live Price",
-                value=f"${price:.2f}",
-                delta=f"{change:.2f} ({pct_change:.2f}%)"
+                label=f"{ticker} PRICE",
+                value=f"${current:.2f}",
+                delta=f"{change:.2f} ({pct:.2f}%)"
             )
-        except:
-            st.warning("Market data unavailable")
-
-    with cols[1]:
-        # 2. Interactive Chart
-        try:
-            hist = stock.history(period="1mo", interval="1d")
-            
-            fig = go.Figure(data=[go.Candlestick(
-                x=hist.index,
-                open=hist['Open'],
-                high=hist['High'],
-                low=hist['Low'],
-                close=hist['Close']
-            )])
-            
+        
+        with col2:
+            # minimal line chart
+            hist = stock.history(period="1mo")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=hist.index, y=hist['Close'],
+                mode='lines', 
+                line=dict(color='#00C0F2', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(0, 192, 242, 0.1)'
+            ))
             fig.update_layout(
-                height=300, 
                 margin=dict(l=0, r=0, t=0, b=0),
-                paper_bgcolor='rgba(0,0,0,0)', # Transparent background
+                height=100,
+                paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="white")
+                showlegend=False,
+                xaxis=dict(showgrid=False, showticklabels=False),
+                yaxis=dict(showgrid=False, showticklabels=False)
             )
-            st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
-        except:
-            st.write("Chart unavailable")
+            st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
+            
+    except:
+        st.warning("Data currently unavailable.")
 
-# --- SIDEBAR: SETTINGS ---
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.write("Sentinel AI v2.0")
-    # You can add Model selection here later
+# --- AGENT: TAVILY RESEARCHER ---
+def perform_live_research(ticker):
+    with st.status(f"🌐 Sentinel Agent researching {ticker}...", expanded=True) as status:
+        
+        # 1. Search Tavily
+        status.write("Querying Neural Search Index...")
+        try:
+            # Advanced search gives deeper financial context
+            response = tavily.search(
+                query=f"Why is {ticker} stock moving today? latest news and analysis", 
+                search_depth="advanced",
+                max_results=5
+            )
+        except Exception as e:
+            status.update(label="Search Failed", state="error")
+            st.error(str(e))
+            return
 
-# --- MAIN LAYOUT ---
-st.title("🛡️ Sentinel Terminal")
+        # 2. Vectorize & Save
+        status.write(f"Processing {len(response['results'])} insights...")
+        
+        new_docs = []
+        for result in response['results']:
+            text_chunk = f"{result['title']}. {result['content']}"
+            embedding = model.encode(text_chunk).tolist()
+            
+            new_docs.append({
+                "ticker": ticker.upper(),
+                "headline": result['title'],
+                "content": result['content'],
+                "published_at": datetime.utcnow().isoformat(),
+                "embedding": embedding
+            })
+            
+        # Bulk Insert for speed
+        if new_docs:
+            supabase.table('market_news').insert(new_docs).execute()
+        
+        status.update(label="Knowledge Base Updated", state="complete", expanded=False)
 
-# Top Bar: Stock Selector
-col1, col2 = st.columns([3, 1])
+# --- MAIN UI ---
+st.title("🛡️ Sentinel Pro")
+
+# Ticker Selection
+col1, col2 = st.columns([1, 4])
 with col1:
-    selected_ticker = st.text_input("Active Ticker", value="NVDA", label_visibility="collapsed")
+    active_ticker = st.text_input("TICKER", value="NVDA").upper()
 
-# --- CALL THE LIVE FRAGMENT ---
-st.divider()
-show_market_data(selected_ticker)
-st.divider()
+show_market_data(active_ticker)
 
-# --- CHAT INTERFACE ---
-# Initialize chat history
+# Chat History
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat messages from history on app rerun
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-# --- LIVE RESEARCH FUNCTION (From previous step) ---
-def perform_live_research(ticker):
-    with st.status(f"🕵️ Agent researching {ticker}...", expanded=True) as status:
-        status.write("Searching global news...")
-        results = []
-        try:
-            with DDGS() as ddgs:
-                news_gen = ddgs.text(f"{ticker} stock news", max_results=5)
-                for r in news_gen:
-                    results.append(r)
-        except Exception as e:
-            status.update(label="Search Failed", state="error")
-            return
-            
-        status.write("Memorizing data...")
-        for article in results:
-            full_text = f"{article['title']}. {article['body']}"
-            embedding = model.encode(full_text).tolist()
-            data = {
-                "ticker": ticker.upper(),
-                "headline": article['title'],
-                "content": article['body'],
-                "published_at": datetime.utcnow().isoformat(),
-                "embedding": embedding
-            }
-            supabase.table('market_news').insert(data).execute()
-        
-        status.update(label="Knowledge Base Updated!", state="complete", expanded=False)
-
-# --- USER INPUT ---
-if prompt := st.chat_input("Ask about the market..."):
-    # 1. Add user message to chat history
+# --- CHAT LOGIC ---
+if prompt := st.chat_input("Ask Sentinel..."):
+    # 1. User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. Generate AI Response
+    # 2. Assistant Response
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         
-        # RAG Logic
+        # A. Semantic Search
         query_vector = model.encode(prompt).tolist()
-        response = supabase.rpc(
+        db_response = supabase.rpc(
             'match_documents', 
-            {'query_embedding': query_vector, 'match_threshold': 0.3, 'match_count': 5}
+            {'query_embedding': query_vector, 'match_threshold': 0.4, 'match_count': 5}
         ).execute()
         
-        matches = response.data
-
-        # Auto-Research Trigger
-        if not matches:
-            # Try to infer ticker from the "Active Ticker" box or the prompt
-            target_ticker = selected_ticker.upper()
-            perform_live_research(target_ticker)
-            # Re-search
-            response = supabase.rpc(
-                'match_documents', 
-                {'query_embedding': query_vector, 'match_threshold': 0.3, 'match_count': 5}
-            ).execute()
-            matches = response.data
-
-        # Construct Context
-        context_text = ""
-        if matches:
-            context_text = "\n\n".join([f"Headline: {m['headline']}\nBody: {m['content']}" for m in matches])
+        matches = db_response.data
         
-        # Groq Call
+        # B. Self-Healing (If no data, Research!)
+        if not matches:
+            perform_live_research(active_ticker)
+            # Re-search after learning
+            db_response = supabase.rpc(
+                'match_documents', 
+                {'query_embedding': query_vector, 'match_threshold': 0.4, 'match_count': 5}
+            ).execute()
+            matches = db_response.data
+
+        # C. Construct Prompt
+        context_str = "\n".join([f"- {m['headline']}: {m['content']}" for m in matches])
+        
+        system_prompt = f"""
+        You are Sentinel, an elite financial intelligence AI. 
+        Synthesize the provided context to answer the user's question.
+        Focus on CAUSALITY (Why did X happen?).
+        If the context is empty, state clearly that you have no data on this topic yet.
+        
+        Context:
+        {context_str}
+        """
+
+        # D. Generate (Streamed)
         full_response = ""
-        completion = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system",
-                 "content": f"You are a helpful financial analyst AI. Answer the user's question clearly and naturally using the provided news context. If the context doesn't have the answer, say so politely. Do not act like a command-line terminal. Context: {context_text}"
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             stream=True
         )
         
-        # Stream the result (Typewriter effect)
-        for chunk in completion:
+        for chunk in stream:
             if chunk.choices[0].delta.content:
-                full_response += chunk.choices[0].delta.content
+                content = chunk.choices[0].delta.content
+                full_response += content
                 message_placeholder.markdown(full_response + "▌")
         
         message_placeholder.markdown(full_response)
         
-        # Show Sources in a sleek "Popover" (New Feature)
+        # E. Sources Dropdown
         if matches:
-            with st.popover("📚 View Sources"):
+            with st.expander("📚 Analyzed Sources"):
                 for m in matches:
                     st.markdown(f"""
-                    <div class="news-card">
-                        <div class="news-title">{m['headline']}</div>
-                        <div class="news-meta">{m['published_at'][:10]}</div>
+                    <div class="source-card">
+                        <b>{m['headline']}</b><br>
+                        <span style="font-size:12px;color:#aaa">{m['content'][:100]}...</span>
                     </div>
                     """, unsafe_allow_html=True)
 
-    # 3. Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": full_response})
