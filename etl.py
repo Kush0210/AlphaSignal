@@ -78,7 +78,15 @@ def fetch_and_store_data(ticker):
 # --- MAIN EXECUTION ---
 if __name__ == "__main__":
     # You can edit this list to track different stocks
-    watchlist = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT"]
+    watchlist = [
+        "NVDA", "TSLA", "AAPL", "AMD", "MSFT", 
+        "GOOGL", "AMZN", "META", "PLTR", "COIN", 
+        "INTC", "SMCI", "ARM"
+    ]
+
+    for symbol in watchlist:
+        fetch_and_store_data(symbol)
+        time.sleep(5) # Wait 5 seconds between stocks to be polite
     
     print("--- Starting ETL Job ---")
     for symbol in watchlist:
