@@ -81,7 +81,7 @@ if query:
                     "content": f"Context: {context_text}\n\nQuestion: {query}"
                 }
             ],
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             temperature=0.5,
         )
 
