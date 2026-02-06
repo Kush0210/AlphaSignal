@@ -120,7 +120,7 @@ if query:
                     {"role": "system", "content": "You are a financial analyst. Use the provided news context to answer. If context is missing, admit it."},
                     {"role": "user", "content": f"Context: {context_text}\n\nQuestion: {query}"}
                 ],
-                model="llama3-70b-8192",
+                model="llama-3.3-70b-versatile",
             )
         
         st.markdown("### 🤖 Analysis")
