@@ -3,6 +3,6 @@ duckduckgo-search
 sentence-transformers
 supabase
 pandas
-streamlit
+streamlit>=1.30.0
 groq
 altair<5
