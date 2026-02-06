@@ -6,3 +6,4 @@ pandas
 streamlit
 groq
 altair<5
+imghdr
