@@ -108,7 +108,7 @@ def show_market_data(ticker):
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color="white")
             )
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
         except:
             st.write("Chart unavailable")
 
@@ -212,7 +212,9 @@ if prompt := st.chat_input("Ask about the market..."):
         completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": f"You are a Bloomberg terminal assistant. Be concise. Use the context: {context_text}"},
+                {"role": "system",
+                 "content": f"You are a helpful financial analyst AI. Answer the user's question clearly and naturally using the provided news context. If the context doesn't have the answer, say so politely. Do not act like a command-line terminal. Context: {context_text}"
+                },
                 {"role": "user", "content": prompt}
             ],
             stream=True
