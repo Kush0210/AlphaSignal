@@ -1,0 +1,7 @@
+yfinance
+duckduckgo-search
+sentence-transformers
+supabase
+pandas
+streamlit
+groq
