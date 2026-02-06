@@ -1,5 +1,5 @@
 yfinance
-tavily-python
+duckduckgo-search
 sentence-transformers
 supabase
 pandas
