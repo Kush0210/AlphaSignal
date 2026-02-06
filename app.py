@@ -172,22 +172,35 @@ if prompt := st.chat_input("Ask Sentinel..."):
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         
-        # A. Semantic Search
+        # A. Semantic Search with STRICT Filter
         query_vector = model.encode(prompt).tolist()
+        
+        # We pass the 'active_ticker' to the DB so it ignores other stocks
         db_response = supabase.rpc(
             'match_documents', 
-            {'query_embedding': query_vector, 'match_threshold': 0.4, 'match_count': 5}
+            {
+                'query_embedding': query_vector, 
+                'match_threshold': 0.5, # Increased threshold for quality
+                'match_count': 5,
+                'filter_ticker': active_ticker # 👈 Critical Update
+            }
         ).execute()
         
         matches = db_response.data
         
-        # B. Self-Healing (If no data, Research!)
+        # B. Self-Healing (If no data for THIS ticker, Research!)
         if not matches:
             perform_live_research(active_ticker)
+            
             # Re-search after learning
             db_response = supabase.rpc(
                 'match_documents', 
-                {'query_embedding': query_vector, 'match_threshold': 0.4, 'match_count': 5}
+                {
+                    'query_embedding': query_vector, 
+                    'match_threshold': 0.5, 
+                    'match_count': 5,
+                    'filter_ticker': active_ticker
+                }
             ).execute()
             matches = db_response.data
 
