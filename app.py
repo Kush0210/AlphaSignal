@@ -7,7 +7,8 @@ from datetime import datetime
 from supabase import create_client, Client
 from groq import Groq
 from sentence_transformers import SentenceTransformer
-from duckduckgo_search import DDGS
+# from duckduckgo_search import DDGS
+import DDGS
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Sentinel Terminal", page_icon="🛡️", layout="wide", initial_sidebar_state="collapsed")
