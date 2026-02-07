@@ -1,5 +1,5 @@
 yfinance
-duckduckgo-search
+ddgs
 sentence-transformers
 supabase
 pandas
