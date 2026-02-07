@@ -1,7 +1,5 @@
 import streamlit as st
 import time
-import pandas as pd
-import plotly.graph_objects as go
 import yfinance as yf
 from datetime import datetime
 from supabase import create_client, Client
@@ -10,56 +8,61 @@ from sentence_transformers import SentenceTransformer
 from duckduckgo_search import DDGS
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Sentinel Terminal", page_icon="🛡️", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Sentinel Terminal", page_icon="🛡️", layout="wide")
 
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stMetric {background-color: #0E1117; padding: 10px; border-radius: 5px; border: 1px solid #262730;}
+    .stMetric {
+        background-color: #0E1117;
+        border: 1px solid #333;
+        padding: 15px;
+        border-radius: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- SETUP ---
+# --- SETUP CREDENTIALS ---
 try:
     supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
-    st.error("❌ Secrets missing!")
+except Exception as e:
+    st.error(f"❌ Secrets missing: {e}")
     st.stop()
 
+# --- LOAD AI MODEL ---
 @st.cache_resource
 def load_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
 
 model = load_model()
 
-# --- LIVE MARKET DATA FRAGMENT ---
+# --- FUNCTION: FETCH LIVE DATA (Native Streamlit Charts) ---
 @st.fragment(run_every=30)
 def show_market_data(ticker):
     if not ticker: return
     try:
         stock = yf.Ticker(ticker)
+        # Get fast price info
         info = stock.fast_info
-        current = info.last_price
-        prev = info.previous_close
-        change = current - prev
-        pct = (change / prev) * 100
+        price = info.last_price
+        change = price - info.previous_close
+        pct = (change / info.previous_close) * 100
         
         col1, col2 = st.columns([1, 3])
         with col1:
-            st.metric(label=f"{ticker} PRICE", value=f"${current:.2f}", delta=f"{change:.2f} ({pct:.2f}%)")
+            # Native Streamlit Metric (Fast & Clean)
+            st.metric(f"{ticker} Price", f"${price:.2f}", f"{change:.2f} ({pct:.2f}%)")
+        
         with col2:
+            # Native Streamlit Line Chart (No Plotly required)
             hist = stock.history(period="1mo")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', line=dict(color='#00C0F2', width=2), fill='tozeroy', fillcolor='rgba(0, 192, 242, 0.1)'))
-            fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), height=100, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False, xaxis=dict(showgrid=False, showticklabels=False), yaxis=dict(showgrid=False, showticklabels=False))
-            st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
-    except:
-        st.warning("Market data unavailable.")
+            st.line_chart(hist['Close'], height=150, color="#00FF00")
+            
+    except Exception:
+        st.warning("Waiting for market data...")
 
-# --- AGENT: LIVE RESEARCHER (DuckDuckGo) ---
+# --- FUNCTION: LIVE RESEARCHER (DuckDuckGo) ---
 def perform_live_research(ticker):
     with st.status(f"🕵️ Agent researching {ticker}...", expanded=True) as status:
         status.write("Searching internet...")
@@ -74,51 +77,60 @@ def perform_live_research(ticker):
             return
 
         status.write("Memorizing data...")
+        new_rows = []
         for article in results:
-            full_text = f"{article['title']}. {article['body']}"
-            embedding = model.encode(full_text).tolist()
-            data = {
-                "ticker": ticker.upper(),
+            text = f"{article['title']}. {article['body']}"
+            embedding = model.encode(text).tolist()
+            
+            new_rows.append({
+                "ticker": ticker,
                 "headline": article['title'],
                 "content": article['body'],
                 "published_at": datetime.utcnow().isoformat(),
                 "embedding": embedding
-            }
+            })
+            
+        if new_rows:
             try:
-                supabase.table('market_news').insert(data).execute()
-            except:
-                continue
-        
+                supabase.table('market_news').insert(new_rows).execute()
+            except Exception as e:
+                print(f"DB Insert Error: {e}")
+                
         status.update(label="Knowledge Base Updated!", state="complete", expanded=False)
 
 # --- MAIN UI ---
 st.title("🛡️ Sentinel Terminal")
 
-col1, col2 = st.columns([1, 4])
-with col1:
-    active_ticker = st.text_input("TICKER", value="NVDA").upper()
+# Ticker Input
+active_ticker = st.text_input("ACTIVE TICKER", value="NVDA").upper()
 
+# Show Data (Auto-refreshes every 30s)
 show_market_data(active_ticker)
 
+# --- CHAT LOGIC ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+# Handle User Input
 if prompt := st.chat_input(f"Ask about {active_ticker}..."):
+    # 1. User Message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # 2. Assistant Response
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         
-        # 1. Search DB with Ticker Filter
+        # A. Encode Question
         query_vector = model.encode(prompt).tolist()
         
-        # Try to call the filtered function first
+        # B. Search Database (With Filter Fix)
         try:
             response = supabase.rpc(
                 'match_documents', 
@@ -130,31 +142,39 @@ if prompt := st.chat_input(f"Ask about {active_ticker}..."):
                 }
             ).execute()
             matches = response.data
-        except:
-            # Fallback if you haven't updated the SQL function yet
-            response = supabase.rpc(
-                'match_documents', 
-                {'query_embedding': query_vector, 'match_threshold': 0.5, 'match_count': 5}
-            ).execute()
-            matches = response.data
+        except Exception:
+            # Fallback if SQL function isn't updated yet
+            matches = []
 
-        # 2. If no matches, Research & Retry
+        # C. If No Data, Research & Retry
         if not matches:
             perform_live_research(active_ticker)
             # Retry Search
-            try:
-                response = supabase.rpc('match_documents', {'query_embedding': query_vector, 'match_threshold': 0.5, 'match_count': 5, 'filter_ticker': active_ticker}).execute()
-            except:
-                response = supabase.rpc('match_documents', {'query_embedding': query_vector, 'match_threshold': 0.5, 'match_count': 5}).execute()
+            response = supabase.rpc(
+                'match_documents', 
+                {
+                    'query_embedding': query_vector, 
+                    'match_threshold': 0.5, 
+                    'match_count': 5,
+                    'filter_ticker': active_ticker
+                }
+            ).execute()
             matches = response.data
 
-        # 3. Generate Answer
-        context_str = "\n".join([f"- {m['headline']}: {m['content']}" for m in matches])
-        
+        # D. Generate Answer
+        if matches:
+            context_str = "\n\n".join([f"Headline: {m['headline']}\nBody: {m['content']}" for m in matches])
+        else:
+            context_str = "No specific news found."
+
+        # Stream Response
         stream = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": f"You are a financial analyst. Answer using this context. If context is empty, admit it. Context: {context_str}"},
+                {
+                    "role": "system", 
+                    "content": f"You are a financial analyst. Answer the user question based ONLY on the provided Context. If the context doesn't answer it, say so. Context: {context_str}"
+                },
                 {"role": "user", "content": prompt}
             ],
             stream=True
@@ -168,9 +188,11 @@ if prompt := st.chat_input(f"Ask about {active_ticker}..."):
         
         message_placeholder.markdown(full_response)
         
+        # Show Sources Dropdown
         if matches:
             with st.expander("📚 Sources"):
                 for m in matches:
-                    st.write(f"- {m['headline']}")
+                    st.markdown(f"**{m['headline']}**")
 
+    # Save to history
     st.session_state.messages.append({"role": "assistant", "content": full_response})
